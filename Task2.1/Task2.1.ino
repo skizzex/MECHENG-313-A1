@@ -1,4 +1,5 @@
 #include <avr/interrupt.h>
+#include <avr/io.h>
 
 #define TOGGLELED() PORTB ^= (1 << PORTB5)
 #define ENABLELED() PORTB |= (1 << PORTB5)
@@ -8,6 +9,10 @@
 static volatile uint8_t toggleCount;
 static volatile uint8_t toggleMax;
 static volatile uint16_t cycleCount; //for counting cycles with 16MHz clock
+const float compareVoltage = 2;
+static volatile uint16_t resultConversionDigital; // output from ADC conversion in digital form
+static volatile float resultConversionAnalogue;  // output from ADC conversion in Analogue form
+static volatile uint8_t conversionComplete = 0;  // variable to tell us if the ADC conversion is complete
 
 //timer 0 ISR to toggle LED
 ISR(TIMER0_COMPA_vect) {
@@ -22,13 +27,14 @@ ISR(TIMER0_COMPA_vect) {
 }
 
 //timer 1 ISR 
-ISR(TIMER1_OVF_vect) {
-  TOGGLELED();
+ISR(TIMER1_COMPA_vect) {
+  ADCSRA |= (1 << ADSC); // ADC - start the conversion
 }
 
 //ADC ISR to record ADC value
 ISR(ADC_vect) {
-  
+  resultConversionDigital = ADC; // digital output from ADC
+  conversionComplete = 1; 
 }
 
 //initialise built-in LED
@@ -60,7 +66,10 @@ void timer1_init() {
 
 //initialise ADC
 void ADC_init() {
-
+	ADMUX = 0x0;
+	ADMUX |= (1 << REFS0); // set V_REF = AV_cc
+	ADCSRA = 0x0;
+	ADCSRA |= (1 << ADPS0) | (1 << ADPS1) | (1 << ADPS2); // Setting ADC prescaler to 128
 }
 
 //blink the LED a number of times
@@ -78,20 +87,34 @@ void blinkLED(uint8_t blinks) {
 
 //test ADC with LED for task 2.1
 void startADC() {
-
+	
 }
 
 int main(void) {
-  sei();  //enable global interrupts
+  cli();  //disable global interrupts
 
-  LED_init();
-  timer0_init(0.2);  //configure timer 0 to toggle LED every 0.2 seconds (CLOCK IS AT 16MHz)
-  timer1_init();  //configure timer 1 (16 bit timer at 16MHz) to CTC mode to read ADC every second
-    //configure ADC
-
-  blinkLED(5);
+	LED_init();
+	timer0_init(0.2);  //configure timer 0 to toggle LED every 0.2 seconds (CLOCK IS AT 16MHz)
+	timer1_init();  //configure timer 1 (16 bit timer at 16MHz) to CTC mode to read ADC every second
+	
+	ADC_init();
+	ADCSRA |= (1 << ADEN) | (1 << ADIE); // ADC conversion interrupt enabled
+	
+	sei(); // enable global interuppts
+	blinkLED(5);
+	TIMSK1 |= (1 << OCIE1A); // enabling timer1 interrupt compA interrupt. Starting timer 1 for ADC sampling for every second
 
   while (1) {
     //check ADC value every second and blink depending on if lower or higher than compare value
+	if (conversionCount == 1){ // this if statement will only be met once a conversion in the ADC ISR has taken place
+		  resultConversionAnalogue = resultConversionDigital * (5/1023); //AnalogueVoltage = digitalOutput * Vref/(2^(n-1))
+		if (resultConversionAnalogue > compareVoltage){
+			blinkLED(2); //blink twice to signal the resulted conversion from the ADC is greater than the Voltage we are comparing it to
+			conversionComplete = 0; // resetting the variable back to zero in order to prevent the if statement from looping incorrectly
+		}else{
+			blinkLED(1); //blink once to signal comparitive voltage is higher than the ADC conversion
+			conversionComplete = 0;
+		}
+	}
   }
 }
